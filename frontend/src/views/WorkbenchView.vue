@@ -70,6 +70,8 @@
       </tbody>
     </table>
 
+    <BackfillBaselinePanel v-if="moduleKey === 'backfill_job'" />
+
     <div v-if="showCreate" class="modal-backdrop" data-testid="create-modal">
       <form class="modal" @submit.prevent="submitCreate">
         <h3>登记{{ meta.entity }}</h3>
@@ -96,6 +98,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
+import BackfillBaselinePanel from './BackfillBaselinePanel.vue'
 import {
   createEntry,
   downloadEntries,

@@ -308,3 +308,67 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
          '写入模式': 'merge', '合并引擎': 'copy-on-write'},
     ],
 }
+
+# 快照覆盖注册表示例：演示按数据窗口检索回填基准时的各类情况。
+# - SNAP-SEED-A/B：各自只覆盖一半缺失时段，需要组合
+# - SNAP-SEED-C：与 A 同名版本 v1 的不可读旧版本，应被排除
+# - SNAP-SEED-D/E：共享别名 daily，形成别名歧义，均应被排除
+# - SNAP-SEED-F：单版本覆盖全段
+SEED_SNAPSHOT_COVERAGE: list[dict[str, Any]] = [
+    {
+        "snapshot_id": "SNAP-SEED-A", "table": "dwd_orders_merged",
+        "version": "v1", "aliases": ["orders-q1"], "format": "parquet",
+        "readable": True,
+        "coverage": [{"start": "2026-01-01", "end": "2026-03-31"}],
+        "boundary_keys": {"window_start": "2026-01-01", "window_end": "2026-03-31",
+                          "handoff_order_id": "ORD-830011"},
+        "boundary_corrected": False, "registered_at": 1759276800,
+        "revoked": False, "revoke_reason": "", "revoked_at": None,
+    },
+    {
+        "snapshot_id": "SNAP-SEED-B", "table": "dwd_orders_merged",
+        "version": "v2", "aliases": ["orders-q2"], "format": "orc",
+        "readable": True,
+        "coverage": [{"start": "2026-04-01", "end": "2026-06-30"}],
+        "boundary_keys": {"window_start": "2026-04-01", "window_end": "2026-06-30",
+                          "handoff_order_id": "ORD-910077"},
+        "boundary_corrected": False, "registered_at": 1761955200,
+        "revoked": False, "revoke_reason": "", "revoked_at": None,
+    },
+    {
+        "snapshot_id": "SNAP-SEED-C", "table": "dwd_orders_merged",
+        "version": "v1", "aliases": [], "format": "parquet",
+        "readable": False,
+        "coverage": [{"start": "2025-10-01", "end": "2025-12-31"}],
+        "boundary_keys": {}, "boundary_corrected": False,
+        "registered_at": 1735689600,
+        "revoked": False, "revoke_reason": "", "revoked_at": None,
+    },
+    {
+        "snapshot_id": "SNAP-SEED-D", "table": "dwd_users_merged",
+        "version": "v3", "aliases": ["daily"], "format": "parquet",
+        "readable": True,
+        "coverage": [{"start": "2026-02-01", "end": "2026-04-30"}],
+        "boundary_keys": {}, "boundary_corrected": False,
+        "registered_at": 1759276800,
+        "revoked": False, "revoke_reason": "", "revoked_at": None,
+    },
+    {
+        "snapshot_id": "SNAP-SEED-E", "table": "dwd_users_merged",
+        "version": "v4", "aliases": ["daily"], "format": "avro",
+        "readable": True,
+        "coverage": [{"start": "2026-02-01", "end": "2026-04-30"}],
+        "boundary_keys": {}, "boundary_corrected": False,
+        "registered_at": 1761955200,
+        "revoked": False, "revoke_reason": "", "revoked_at": None,
+    },
+    {
+        "snapshot_id": "SNAP-SEED-F", "table": "dwd_trades_merged",
+        "version": "v5", "aliases": ["trades-full"], "format": "parquet",
+        "readable": True,
+        "coverage": [{"start": "2026-01-01", "end": "2026-09-30"}],
+        "boundary_keys": {"window_start": "2026-01-01", "window_end": "2026-09-30"},
+        "boundary_corrected": False, "registered_at": 1764547200,
+        "revoked": False, "revoke_reason": "", "revoked_at": None,
+    },
+]

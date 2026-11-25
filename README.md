@@ -77,5 +77,29 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 回填基准检索（backfill_job × snapshot_mgr）
+
+回填登记不再只检查依赖表「有没有快照」，而是按缺失时段的数据窗口依据快照
+**实际覆盖范围**寻找基准，相关代码：
+
+- `backend/app/services/snapshot_search.py`：纯领域逻辑——自然月窗口切分（带可读
+  标签）、区间并集合并、full/partial/none 覆盖判定、按完整覆盖窗口数排序、
+  贪心组合推荐、跨版本交接位置去重。
+- 覆盖注册表 `store._snapshot_coverage`：登记每个物理快照的覆盖区间、压缩格式、
+  版本别名、边界键与可读状态；撤销只标记失效不删除记录。
+- 检索排除原因分四类：`unreadable`（同名不可读旧版本）、`format_mismatch`（格式
+  不符筛选）、`alias_ambiguous`（同名/别名对应多个物理快照）、`revoked`（已撤销）；
+  只覆盖部分窗口的版本在 `partial_snapshots` 单列。
+- 回填清单 `store._backfill_plans`：选定组合同步后冻结交接点，回填执行严格读取
+  清单登记的实际版本与边界键；源快照失效时原选单保留、窗口失败原因可查，历次
+  查询结论存入 `store._baseline_query_history`，旧结论持续可复核。
+- 专用路由前缀 `/api/backfill-jobs`（先于通用 `/api/{module}` 注册）：
+  `snapshot-registry`、`{job_id}/baseline-search`、`{job_id}/baseline-plan`、
+  `{job_id}/execute`、`{job_id}/review`、`baseline-queries/{query_id}`。
+- 前端在回填作业模块挂载 `BackfillBaselinePanel.vue`，承载筛选、排序结果、
+  排除原因、清单同步、执行与撤销复核。
+- 验收测试：`backend/tests/test_backfill_baseline.py`（区间交叠双快照 + 同名不可读
+  旧版本 → 组合选择 → 全段新版本重选 → 执行核对边界键 → 撤销复核）。
+
 领域：数据工程
 子方向：数仓与数据湖

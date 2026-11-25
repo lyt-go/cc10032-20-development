@@ -101,7 +101,42 @@ class SnapshotMgrService(BaseModuleService):
                 return {"ok": True, "snapshot": snap_data, "downstream_consumer": "backfill_job"}
         return {"ok": False, "reason": f"表 {table_name} 无可用快照"}
 
+    # ---- 覆盖注册表：回填基准检索的数据来源 ----
+    def register_coverage(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """登记物理快照实际覆盖的数据窗口、格式、别名与边界键。
+
+        回填基准检索只认可覆盖注册表里的快照；未登记覆盖范围的快照无法被检索到。
+        """
+        required = ["snapshot_id", "table", "coverage"]
+        missing = [f for f in required if not payload.get(f)]
+        if missing:
+            return {"ok": False, "reason": f"缺少必填字段：{'、'.join(missing)}"}
+        for cov in payload["coverage"]:
+            if not cov.get("start") or not cov.get("end"):
+                return {"ok": False, "reason": "覆盖窗口必须同时包含 start 与 end"}
+            if str(cov["start"]) > str(cov["end"]):
+                return {"ok": False, "reason": f"覆盖窗口 {cov['start']}~{cov['end']} 起始晚于结束"}
+        record = store.register_snapshot_coverage(payload)
+        return {"ok": True, "record": record}
+
+    def list_coverage(self, table: str | None = None) -> dict[str, Any]:
+        """列出覆盖注册表，可按目标表筛选。"""
+        registry = store.snapshot_coverage_registry()
+        if table:
+            registry = [r for r in registry if r.get("table") == table]
+        return {"ok": True, "items": registry, "total": len(registry)}
+
+    def revoke_coverage(self, snapshot_id: str, reason: str) -> dict[str, Any]:
+        """撤销快照：只标记失效不删除，回填清单里的原选单与失败原因继续保留。"""
+        record = store.revoke_snapshot_coverage(snapshot_id, reason)
+        if record is None:
+            return {"ok": False, "reason": f"快照 {snapshot_id} 未在覆盖注册表登记"}
+        return {"ok": True, "record": record}
+
     def domain_snapshot(self) -> dict[str, Any]:
         base = super().domain_snapshot()
         base["stored_snapshots"] = len(store._snapshot_store)
+        base["coverage_registry"] = len(store.snapshot_coverage_registry())
+        base["revoked_snapshots"] = sum(
+            1 for r in store.snapshot_coverage_registry() if r.get("revoked"))
         return base

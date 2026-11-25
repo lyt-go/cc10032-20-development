@@ -8,7 +8,7 @@ import hashlib
 import time
 from typing import Any
 
-from app.seed import SEED_ROWS
+from app.seed import SEED_ROWS, SEED_SNAPSHOT_COVERAGE
 
 
 class DataPipeline:
@@ -129,10 +129,22 @@ class Store:
         self._watermark_offsets: dict[str, dict[str, Any]] = {}
         # 快照存储表（snapshot_mgr → backfill_job 共享）
         self._snapshot_store: dict[str, dict[str, Any]] = {}
+        # 快照覆盖注册表：登记每个物理快照的实际数据窗口、格式、别名、边界键
+        self._snapshot_coverage: dict[str, dict[str, Any]] = {}
+        # 回填基准清单：backfill_job 选定快照组合后同步到此，按作业 id 归档
+        self._backfill_plans: dict[int, dict[str, Any]] = {}
+        # 回填基准检索历史：保留每一次查询结论（含排除原因），供旧结论追溯
+        self._baseline_query_history: list[dict[str, Any]] = []
+        # 回填执行记录：实际执行时按清单版本写入，撤销复核也落在这里
+        self._backfill_executions: list[dict[str, Any]] = []
         # 血缘图（lineage → table_format 共享）
         self._lineage_graph: dict[str, list[dict[str, Any]]] = {}
         # 归档清单（cold_archive → retention 共享）
         self._archive_manifest: list[dict[str, Any]] = []
+
+        # 初始化快照覆盖注册表示例数据
+        for coverage in SEED_SNAPSHOT_COVERAGE:
+            self._snapshot_coverage[str(coverage["snapshot_id"])] = dict(coverage)
 
     # ---------- 基础 CRUD ----------
     def module_names(self) -> list[str]:
@@ -216,6 +228,85 @@ class Store:
 
     def get_snapshot(self, snap_id: str) -> dict[str, Any] | None:
         return self._snapshot_store.get(snap_id)
+
+    # ---------- 快照覆盖注册表 ----------
+    def register_snapshot_coverage(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """登记/更新一个物理快照的覆盖窗口、格式、别名与边界键。"""
+        snapshot_id = str(entry["snapshot_id"])
+        record = {
+            "snapshot_id": snapshot_id,
+            "table": str(entry["table"]),
+            "version": str(entry.get("version", "")),
+            "aliases": list(entry.get("aliases", []) or []),
+            "format": str(entry.get("format", "parquet")),
+            "readable": bool(entry.get("readable", True)),
+            "coverage": list(entry.get("coverage", []) or []),
+            "boundary_keys": dict(entry.get("boundary_keys", {}) or {}),
+            "boundary_corrected": bool(entry.get("boundary_corrected", False)),
+            "registered_at": entry.get("registered_at", time.time()),
+            "revoked": False,
+            "revoke_reason": "",
+            "revoked_at": None,
+        }
+        self._snapshot_coverage[snapshot_id] = record
+        return record
+
+    def snapshot_coverage_registry(self) -> list[dict[str, Any]]:
+        return [dict(v) for v in self._snapshot_coverage.values()]
+
+    def coverage_record(self, snapshot_id: str) -> dict[str, Any] | None:
+        return self._snapshot_coverage.get(str(snapshot_id))
+
+    def revoke_snapshot_coverage(self, snapshot_id: str, reason: str) -> dict[str, Any] | None:
+        """撤销快照注册：标记失效但不删除记录，原选单与失败原因可追溯。"""
+        record = self._snapshot_coverage.get(str(snapshot_id))
+        if record is None:
+            return None
+        record["revoked"] = True
+        record["revoke_reason"] = reason or "快照失效"
+        record["revoked_at"] = time.time()
+        return record
+
+    # ---------- 回填基准清单 ----------
+    def save_backfill_plan(self, job_id: int, plan: dict[str, Any]) -> dict[str, Any]:
+        self._backfill_plans[int(job_id)] = dict(plan)
+        return dict(plan)
+
+    def backfill_plan(self, job_id: int) -> dict[str, Any] | None:
+        plan = self._backfill_plans.get(int(job_id))
+        return dict(plan) if plan is not None else None
+
+    def all_backfill_plans(self) -> list[dict[str, Any]]:
+        return [dict(p) for p in self._backfill_plans.values()]
+
+    # ---------- 回填基准检索历史 ----------
+    def append_baseline_query(self, record: dict[str, Any]) -> dict[str, Any]:
+        record = dict(record)
+        record.setdefault("queried_at", time.time())
+        self._baseline_query_history.append(record)
+        return record
+
+    def baseline_queries_for_job(self, job_id: int) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._baseline_query_history if r.get("job_id") == job_id]
+
+    def baseline_query(self, query_id: str) -> dict[str, Any] | None:
+        for record in self._baseline_query_history:
+            if record.get("query_id") == query_id:
+                return dict(record)
+        return None
+
+    # ---------- 回填执行记录 ----------
+    def append_backfill_execution(self, record: dict[str, Any]) -> dict[str, Any]:
+        record = dict(record)
+        record.setdefault("executed_at", time.time())
+        self._backfill_executions.append(record)
+        return record
+
+    def backfill_executions(self, job_id: int | None = None) -> list[dict[str, Any]]:
+        records = [dict(r) for r in self._backfill_executions]
+        if job_id is not None:
+            records = [r for r in records if r.get("job_id") == job_id]
+        return records
 
     # ---------- 变更日志 ----------
     def append_changelog(self, entry: dict[str, Any]) -> None:
